@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shopping_list_app/data/categories.dart';
 import 'package:shopping_list_app/models/category.dart';
 import 'package:shopping_list_app/models/grocery_item.dart';
@@ -14,8 +16,9 @@ class GroceryFormScreen extends StatefulWidget {
 
 class _GroceryFormScreenState extends State<GroceryFormScreen> {
   final _formKey = GlobalKey<FormState>();
+  var _isSubmiting = false;
   String? _enteredName;
-  String? _enteredQuantity;
+  int? _enteredQuantity;
   Category? _selectedCategory;
 
   bool get _isEdit {
@@ -26,23 +29,91 @@ class _GroceryFormScreenState extends State<GroceryFormScreen> {
   void initState() {
     super.initState();
     _enteredName = _isEdit ? widget.groceryItem!.name : '';
-    _enteredQuantity = _isEdit ? widget.groceryItem!.quantity.toString() : '1';
+    _enteredQuantity = _isEdit ? widget.groceryItem!.quantity : 1;
     _selectedCategory = _isEdit
         ? widget.groceryItem!.category
         : categories[Categories.vegetables]!;
   }
 
-  void _saveItem() {
+  Future<http.Response> _updateItem() async {
+    final payload = {
+      'id': widget.groceryItem!.id,
+      'name': _enteredName!,
+      'quantity': _enteredQuantity!,
+      'category': _selectedCategory!.title,
+    };
+
+    final url = Uri.https('shopping-list-93ccd-default-rtdb.firebaseio.com',
+        'shopping-list/${widget.groceryItem!.id}.json');
+    final response = await http.put(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(payload),
+    );
+
+    return response;
+  }
+
+  Future<http.Response> _saveItem() async {
+    final payload = {
+      'name': _enteredName!,
+      'quantity': _enteredQuantity!,
+      'category': _selectedCategory!.title,
+    };
+
+    final url = Uri.https('shopping-list-93ccd-default-rtdb.firebaseio.com',
+        'shopping-list.json');
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(payload),
+    );
+
+    return response;
+  }
+
+  void _submitItem() async {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
-      Navigator.of(context).pop(
-        GroceryItem(
-          id: DateTime.now().toString(),
-          name: _enteredName!,
-          quantity: int.parse(_enteredQuantity!),
-          category: _selectedCategory!,
-        ),
-      );
+
+      setState(() => _isSubmiting = true);
+
+      try {
+        final response = _isEdit ? await _updateItem() : await _saveItem();
+        final Map<String, dynamic> data = json.decode(response.body);
+
+        if (context.mounted) {
+          Navigator.of(context).pop(
+            GroceryItem(
+              id: data['name'],
+              name: _enteredName!,
+              quantity: _enteredQuantity!,
+              category: _selectedCategory!,
+            ),
+          );
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Text(
+                    _isEdit
+                        ? 'It wasn\'t possible to update this item.'
+                        : 'It wasn\'t possible to add this item.',
+                  ),
+                ),
+                const Expanded(
+                  child: Text('Please, try again later!'),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -79,7 +150,7 @@ class _GroceryFormScreenState extends State<GroceryFormScreen> {
                   children: [
                     Expanded(
                       child: TextFormField(
-                        initialValue: _enteredQuantity,
+                        initialValue: _enteredQuantity.toString(),
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
                           label: Text('Quantity'),
@@ -94,7 +165,9 @@ class _GroceryFormScreenState extends State<GroceryFormScreen> {
 
                           return null;
                         },
-                        onSaved: (value) => (_enteredQuantity = value!),
+                        onSaved: (value) {
+                          _enteredQuantity = int.parse(value!);
+                        },
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -130,12 +203,29 @@ class _GroceryFormScreenState extends State<GroceryFormScreen> {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton(
-                      onPressed: () => _formKey.currentState!.reset(),
+                      onPressed: !_isSubmiting
+                          ? () => _formKey.currentState!.reset()
+                          : null,
                       child: const Text('Reset'),
                     ),
                     ElevatedButton(
-                      onPressed: _saveItem,
-                      child: const Text('Add item'),
+                      onPressed: !_isSubmiting ? _submitItem : null,
+                      child: Row(
+                        children: [
+                          if (_isSubmiting)
+                            const Padding(
+                              padding: EdgeInsets.only(right: 12),
+                              child: SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(),
+                              ),
+                            ),
+                          _isEdit
+                              ? const Text('Save item')
+                              : const Text('Add item'),
+                        ],
+                      ),
                     ),
                   ],
                 )
